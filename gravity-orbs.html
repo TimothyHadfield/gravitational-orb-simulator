@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gravity Orbs Simulation</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background: #0a0a1a;
+            cursor: crosshair;
+        }
+        canvas {
+            display: block;
+        }
+        #info {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: #fff;
+            font-family: Arial, sans-serif;
+            font-size: 14px;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 10px;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+    <div id="info">
+        Click to place orbs<br>
+        Orbs: <span id="count">0</span>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const countDisplay = document.getElementById('count');
+
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        window.addEventListener('resize', () => {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        });
+
+        class Orb {
+            constructor(x, y, mass = 1) {
+                this.x = x;
+                this.y = y;
+                this.vx = 0;
+                this.vy = 0;
+                this.mass = mass;
+                this.radius = Math.sqrt(mass) * 5;
+            }
+
+            draw() {
+                const gradient = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, this.radius);
+                gradient.addColorStop(0, '#ffffff');
+                gradient.addColorStop(0.3, '#88ccff');
+                gradient.addColorStop(1, '#4466ff');
+                
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fillStyle = gradient;
+                ctx.fill();
+                
+                // Glow effect
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius + 3, 0, Math.PI * 2);
+                ctx.strokeStyle = 'rgba(136, 204, 255, 0.3)';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+            }
+
+            update(orbs) {
+                // Apply gravitational force from all other orbs
+                for (let other of orbs) {
+                    if (other === this) continue;
+
+                    const dx = other.x - this.x;
+                    const dy = other.y - this.y;
+                    const distSq = dx * dx + dy * dy;
+                    const dist = Math.sqrt(distSq);
+
+                    // Prevent division by zero and extreme forces
+                    if (dist < 1) continue;
+
+                    // Gravitational constant (adjust for simulation)
+                    const G = 2.0;
+                    const force = (G * this.mass * other.mass) / distSq;
+
+                    // Calculate acceleration and update velocity
+                    const ax = (force * dx / dist) / this.mass;
+                    const ay = (force * dy / dist) / this.mass;
+
+                    this.vx += ax;
+                    this.vy += ay;
+                }
+
+                // Apply damping to prevent infinite acceleration
+                this.vx *= 0.99;
+                this.vy *= 0.99;
+
+                // Update position
+                this.x += this.vx;
+                this.y += this.vy;
+            }
+        }
+
+        let orbs = [];
+
+        function checkCollisions() {
+            for (let i = orbs.length - 1; i >= 0; i--) {
+                for (let j = i - 1; j >= 0; j--) {
+                    const orb1 = orbs[i];
+                    const orb2 = orbs[j];
+
+                    const dx = orb2.x - orb1.x;
+                    const dy = orb2.y - orb1.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+
+                    // Check if orbs are touching
+                    if (dist < orb1.radius + orb2.radius) {
+                        // Combine masses
+                        const totalMass = orb1.mass + orb2.mass;
+                        
+                        // Calculate center of mass position
+                        const newX = (orb1.x * orb1.mass + orb2.x * orb2.mass) / totalMass;
+                        const newY = (orb1.y * orb1.mass + orb2.y * orb2.mass) / totalMass;
+                        
+                        // Conserve momentum
+                        const newVx = (orb1.vx * orb1.mass + orb2.vx * orb2.mass) / totalMass;
+                        const newVy = (orb1.vy * orb1.mass + orb2.vy * orb2.mass) / totalMass;
+
+                        // Create new combined orb
+                        const newOrb = new Orb(newX, newY, totalMass);
+                        newOrb.vx = newVx;
+                        newOrb.vy = newVy;
+
+                        // Remove old orbs and add new one
+                        orbs.splice(i, 1);
+                        orbs.splice(j, 1);
+                        orbs.push(newOrb);
+
+                        // Break to avoid index issues
+                        break;
+                    }
+                }
+            }
+        }
+
+        function animate() {
+            ctx.fillStyle = 'rgba(10, 10, 26, 0.2)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Apply transformations for zoom and pan
+            ctx.save();
+            ctx.translate(offsetX, offsetY);
+            ctx.scale(scale, scale);
+
+            // Check if we should spawn a new orb
+            checkSpawn();
+
+            // Update and draw all orbs
+            for (let orb of orbs) {
+                orb.update(orbs);
+                orb.draw();
+            }
+
+            // Check for collisions and merge orbs
+            checkCollisions();
+
+            ctx.restore();
+
+            // Update count display
+            countDisplay.textContent = orbs.length;
+
+            requestAnimationFrame(animate);
+        }
+
+        let isMouseDown = false;
+        let isPanning = false;
+        let lastMouseX = 0;
+        let lastMouseY = 0;
+        let lastPanX = 0;
+        let lastPanY = 0;
+        let mouseVX = 0;
+        let mouseVY = 0;
+        let lastSpawnTime = 0;
+        const spawnRate = 100; // milliseconds between spawns
+        let spawnRateMultiplier = 1;
+        let spawnMassMultiplier = 1;
+        let scale = 1;
+        let offsetX = 0;
+        let offsetY = 0;
+        let clickCount = 0;
+        let clickTimer = null;
+
+        canvas.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const screenX = e.clientX - rect.left;
+            const screenY = e.clientY - rect.top;
+            
+            // Handle panning
+            if (isPanning) {
+                const dx = screenX - lastPanX;
+                const dy = screenY - lastPanY;
+                offsetX += dx;
+                offsetY += dy;
+                lastPanX = screenX;
+                lastPanY = screenY;
+                return;
+            }
+            
+            // Convert to world coordinates
+            const worldX = (screenX - offsetX) / scale;
+            const worldY = (screenY - offsetY) / scale;
+            
+            // Calculate mouse velocity in world space
+            mouseVX = (worldX - lastMouseX) * 0.3;
+            mouseVY = (worldY - lastMouseY) * 0.3;
+            
+            lastMouseX = worldX;
+            lastMouseY = worldY;
+        });
+
+        canvas.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+            
+            // Get world coordinates before zoom
+            const worldX = (mouseX - offsetX) / scale;
+            const worldY = (mouseY - offsetY) / scale;
+            
+            // Adjust scale
+            const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
+            scale *= zoomFactor;
+            
+            // Clamp scale
+            scale = Math.max(0.1, Math.min(10, scale));
+            
+            // Adjust offset to zoom toward mouse position
+            offsetX = mouseX - worldX * scale;
+            offsetY = mouseY - worldY * scale;
+        });
+
+        canvas.addEventListener('mousedown', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const screenX = e.clientX - rect.left;
+            const screenY = e.clientY - rect.top;
+            
+            // Right click for panning
+            if (e.button === 2) {
+                isPanning = true;
+                lastPanX = screenX;
+                lastPanY = screenY;
+                return;
+            }
+            
+            // Left click for spawning
+            if (e.button === 0) {
+                // Track click count for spawn rate multiplier
+                clickCount++;
+                if (clickTimer) clearTimeout(clickTimer);
+                clickTimer = setTimeout(() => {
+                    clickCount = 0;
+                }, 300);
+                
+                // Set spawn rate multiplier based on clicks
+                if (clickCount === 1) {
+                    spawnRateMultiplier = 1;
+                } else if (clickCount === 2) {
+                    spawnRateMultiplier = 4;
+                } else if (clickCount >= 3) {
+                    spawnRateMultiplier = 9;
+                }
+                
+                // Check if shift is held for mass multiplier
+                spawnMassMultiplier = e.shiftKey ? 10 : 1;
+                
+                isMouseDown = true;
+                
+                // Convert to world coordinates
+                lastMouseX = (screenX - offsetX) / scale;
+                lastMouseY = (screenY - offsetY) / scale;
+                
+                // Spawn first orb immediately
+                spawnOrbAtMouse();
+                lastSpawnTime = Date.now();
+            }
+        });
+
+        canvas.addEventListener('mouseup', () => {
+            isMouseDown = false;
+            isPanning = false;
+        });
+
+        canvas.addEventListener('mouseleave', () => {
+            isMouseDown = false;
+            isPanning = false;
+        });
+
+        canvas.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+        });
+
+        function spawnOrbAtMouse() {
+            const newOrb = new Orb(lastMouseX, lastMouseY, spawnMassMultiplier);
+            newOrb.vx = mouseVX;
+            newOrb.vy = mouseVY;
+            orbs.push(newOrb);
+        }
+
+        function checkSpawn() {
+            if (isMouseDown && Date.now() - lastSpawnTime >= spawnRate / spawnRateMultiplier) {
+                spawnOrbAtMouse();
+                lastSpawnTime = Date.now();
+            }
+        }
+
+        animate();
+    </script>
+</body>
+</html>
